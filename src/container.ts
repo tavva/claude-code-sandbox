@@ -502,18 +502,6 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
     const { execSync } = require("child_process");
     const fs = require("fs");
 
-    // Helper function to get tar flags safely
-    const getTarFlags = () => {
-      try {
-        // Test if --no-xattrs is supported by checking tar help
-        execSync("tar --help 2>&1 | grep -q no-xattrs", { stdio: "pipe" });
-        return "--no-xattrs";
-      } catch {
-        // --no-xattrs not supported, use standard tar
-        return "";
-      }
-    };
-
     try {
       // Get list of git-tracked files (including uncommitted changes)
       const trackedFiles = execSync("git ls-files", {
@@ -590,19 +578,18 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
       // Also copy .git directory to preserve git history
       console.log(chalk.blue("• Copying git history..."));
       const gitTarFile = `/tmp/claude-sandbox-git-${Date.now()}.tar`;
-      // Exclude macOS resource fork files and .DS_Store when creating git archive
-      // Also strip extended attributes to prevent macOS xattr issues in Docker
-      const tarFlags = getTarFlags();
-      // On macOS, also exclude extended attributes that cause Docker issues
-      const additionalFlags = (process.platform as string) === "darwin" ? "--no-xattrs --no-fflags" : "";
-      const combinedFlags = `${tarFlags} ${additionalFlags}`.trim();
-      execSync(
-        `tar -cf "${gitTarFile}" --exclude="._*" --exclude=".DS_Store" ${combinedFlags} .git`,
-        {
-          cwd: workDir,
-          stdio: "pipe",
-        },
-      );
+
+      // On macOS, use --no-xattrs and --no-fflags to prevent extended attribute issues
+      let tarCommand = `tar -cf "${gitTarFile}" --exclude="._*" --exclude=".DS_Store"`;
+      if (process.platform === "darwin") {
+        tarCommand += " --no-xattrs --no-fflags";
+      }
+      tarCommand += " .git";
+
+      execSync(tarCommand, {
+        cwd: workDir,
+        stdio: "pipe",
+      });
 
       try {
         const gitStream = fs.createReadStream(gitTarFile);
@@ -635,18 +622,6 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
     const os = require("os");
     const path = require("path");
     const { execSync } = require("child_process");
-
-    // Helper function to get tar flags safely
-    const getTarFlags = () => {
-      try {
-        // Test if --no-xattrs is supported by checking tar help
-        execSync("tar --help 2>&1 | grep -q no-xattrs", { stdio: "pipe" });
-        return "--no-xattrs";
-      } catch {
-        // --no-xattrs not supported, use standard tar
-        return "";
-      }
-    };
 
     try {
       // First, try to get credentials from macOS Keychain if on Mac
@@ -779,24 +754,26 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
 
       // Copy .claude directory if it exists (but skip if we already copied from Keychain)
       const claudeDir = path.join(os.homedir(), ".claude");
+      const skipClaudeDir = process.platform === "darwin";
       if (
         fs.existsSync(claudeDir) &&
         fs.statSync(claudeDir).isDirectory() &&
-        process.platform !== "darwin"
+        !skipClaudeDir
       ) {
         console.log(chalk.blue("• Copying .claude directory..."));
 
         const tarFile = `/tmp/claude-dir-${Date.now()}.tar`;
-        const tarFlags = getTarFlags();
-        // On macOS, also exclude extended attributes that cause Docker issues
-        const additionalFlags = (process.platform as string) === "darwin" ? "--no-xattrs --no-fflags" : "";
-        const combinedFlags = `${tarFlags} ${additionalFlags}`.trim();
-        execSync(
-          `tar -cf "${tarFile}" ${combinedFlags} -C "${os.homedir()}" .claude`,
-          {
-            stdio: "pipe",
-          },
-        );
+
+        // On macOS, use --no-xattrs and --no-fflags to prevent extended attribute issues
+        let tarCommand = `tar -cf "${tarFile}"`;
+        if (process.platform === "darwin") {
+          tarCommand += " --no-xattrs --no-fflags";
+        }
+        tarCommand += ` -C "${os.homedir()}" .claude`;
+
+        execSync(tarCommand, {
+          stdio: "pipe",
+        });
 
         const stream = fs.createReadStream(tarFile);
         await container.putArchive(stream, {
